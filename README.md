@@ -22,12 +22,20 @@ from SQL injection.
 
 ## Scheduling an auto run
 
-In the **Schedule Auto Run** box, pick a date/time and click **Set Schedule**.
-The app must stay open — while it's running, an internal timer counts down,
-and at the scheduled time it automatically runs **Get Count** followed by
-**Run ASC + DESC**, with no confirmation prompt. Click **Cancel** to abort a
-pending schedule. This is a one-shot schedule, not recurring, and does not
-use Windows Task Scheduler — closing the app cancels it.
+The app must stay open for either kind of schedule below — an internal timer
+checks every second while running, and neither uses Windows Task Scheduler.
+At trigger time, both automatically run **Get Count** followed by
+**Run ASC + DESC**, with no confirmation prompt.
+
+**One-Time Schedule** — pick a specific date/time and click **Set Schedule**.
+Fires once, then clears itself. Click **Cancel** to abort a pending one.
+
+**Recurring Schedule** — check one or more days of the week, pick a time
+(e.g. Fri + Sat at 01:00), and click **Save Recurring**. Fires on every
+matching day at that time, every week, for as long as the app is open at
+that moment. Click **Remove** to turn it off. Unlike the one-time schedule,
+this is saved to `settings.json` and reloaded automatically the next time
+the app is opened — you don't need to re-enter it each time.
 
 For unattended runs that don't require the app to be open and waiting, use
 `--auto` (see below) driven by an external scheduler instead.

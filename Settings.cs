@@ -15,6 +15,10 @@ public class Settings
     public int? HalfAscOverride { get; set; }
     public int? HalfDescOverride { get; set; }
 
+    public bool RecurringEnabled { get; set; }
+    public string RecurringDays { get; set; } = ""; // comma-separated DayOfWeek names, e.g. "Friday,Saturday"
+    public string RecurringTime { get; set; } = "01:00"; // HH:mm, 24h
+
     private static string SettingsPath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
         "ChurnRunner", "settings.json");

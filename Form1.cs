@@ -7,6 +7,8 @@ public partial class Form1 : Form
     private bool _connCheckInProgress;
     private CancellationTokenSource? _runCts;
     private DateTime? _scheduledRunTime;
+    private bool _recurringEnabled;
+    private DateTime? _lastRecurringTriggerDate;
 
     public Form1()
     {
@@ -75,7 +77,10 @@ public partial class Form1 : Form
             Username = txtUsername.Text.Trim(),
             TrustServerCertificate = chkTrustCert.Checked,
             HalfAscOverride = (int)numHalfAsc.Value,
-            HalfDescOverride = (int)numHalfDesc.Value
+            HalfDescOverride = (int)numHalfDesc.Value,
+            RecurringEnabled = _recurringEnabled,
+            RecurringDays = string.Join(",", Enumerable.Range(0, 7).Where(i => chkDays[i].Checked).Select(i => ((DayOfWeek)i).ToString())),
+            RecurringTime = dtpRecurringTime.Value.ToString("HH:mm")
         };
         s.SetPassword(txtPassword.Text);
         return s;
@@ -95,6 +100,27 @@ public partial class Form1 : Form
         try { txtPassword.Text = s.GetPassword(); } catch { /* different machine/user profile */ }
         if (s.HalfAscOverride is int a) numHalfAsc.Value = a;
         if (s.HalfDescOverride is int d) numHalfDesc.Value = d;
+
+        if (s.RecurringEnabled && !string.IsNullOrWhiteSpace(s.RecurringDays))
+        {
+            var days = s.RecurringDays
+                .Split(',', StringSplitOptions.RemoveEmptyEntries)
+                .Select(x => Enum.TryParse<DayOfWeek>(x, out var d2) ? d2 : (DayOfWeek?)null)
+                .Where(d2 => d2.HasValue)
+                .Select(d2 => d2!.Value)
+                .ToHashSet();
+
+            for (int i = 0; i < 7; i++) chkDays[i].Checked = days.Contains((DayOfWeek)i);
+
+            if (TimeSpan.TryParse(s.RecurringTime, out var t)) dtpRecurringTime.Value = DateTime.Today.Add(t);
+
+            _recurringEnabled = true;
+            foreach (var c in chkDays) c.Enabled = false;
+            dtpRecurringTime.Enabled = false;
+            btnSaveRecurring.Enabled = false;
+            btnRemoveRecurring.Enabled = true;
+        }
+        UpdateRecurringStatusLabel();
 
         Log("Loaded saved connection settings.");
     }
@@ -297,30 +323,128 @@ public partial class Form1 : Form
 
     private async void ScheduleTimer_Tick(object? sender, EventArgs e)
     {
-        if (_scheduledRunTime is not DateTime target) return;
-
-        var remaining = target - DateTime.Now;
-        if (remaining <= TimeSpan.Zero)
+        if (_scheduledRunTime is DateTime target)
         {
-            _scheduledRunTime = null;
-            dtpScheduleTime.Enabled = true;
-            btnSetSchedule.Enabled = true;
-            btnCancelSchedule.Enabled = false;
-            lblScheduleStatus.Text = "Not scheduled.";
-
-            if (_runCts != null)
+            var remaining = target - DateTime.Now;
+            if (remaining <= TimeSpan.Zero)
             {
-                Log("Scheduled run skipped: a run is already in progress.");
-                return;
+                _scheduledRunTime = null;
+                dtpScheduleTime.Enabled = true;
+                btnSetSchedule.Enabled = true;
+                btnCancelSchedule.Enabled = false;
+                lblScheduleStatus.Text = "Not scheduled.";
+
+                if (_runCts != null)
+                {
+                    Log("Scheduled run skipped: a run is already in progress.");
+                }
+                else
+                {
+                    Log("Scheduled time reached — starting auto run (Get Count, then Run Both).");
+                    await RunScheduledJob();
+                }
+            }
+            else
+            {
+                lblScheduleStatus.Text =
+                    $"Scheduled for {target:yyyy-MM-dd HH:mm:ss} (in {(int)remaining.TotalHours:00}:{remaining.Minutes:00}:{remaining.Seconds:00}).";
+            }
+        }
+
+        if (_recurringEnabled)
+        {
+            var now = DateTime.Now;
+            bool dayMatches = chkDays[(int)now.DayOfWeek].Checked;
+            bool timeMatches = now.Hour == dtpRecurringTime.Value.Hour && now.Minute == dtpRecurringTime.Value.Minute;
+
+            if (dayMatches && timeMatches && _lastRecurringTriggerDate != now.Date)
+            {
+                _lastRecurringTriggerDate = now.Date;
+
+                if (_runCts != null)
+                {
+                    Log("Recurring run skipped: a run is already in progress.");
+                }
+                else
+                {
+                    Log($"Recurring schedule triggered ({now.DayOfWeek} {dtpRecurringTime.Value:HH:mm}) — starting auto run.");
+                    await RunScheduledJob();
+                }
             }
 
-            Log("Scheduled time reached — starting auto run (Get Count, then Run Both).");
-            await RunScheduledJob();
+            UpdateRecurringStatusLabel();
+        }
+    }
+
+    private void BtnSaveRecurring_Click(object? sender, EventArgs e)
+    {
+        if (!chkDays.Any(c => c.Checked))
+        {
+            MessageBox.Show("Select at least one day.", "Invalid schedule",
+                MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
 
-        lblScheduleStatus.Text =
-            $"Scheduled for {target:yyyy-MM-dd HH:mm:ss} (in {(int)remaining.TotalHours:00}:{remaining.Minutes:00}:{remaining.Seconds:00}).";
+        _recurringEnabled = true;
+        _lastRecurringTriggerDate = null;
+
+        foreach (var c in chkDays) c.Enabled = false;
+        dtpRecurringTime.Enabled = false;
+        btnSaveRecurring.Enabled = false;
+        btnRemoveRecurring.Enabled = true;
+
+        BuildSettingsFromForm().Save();
+        UpdateRecurringStatusLabel();
+
+        var dayList = string.Join(",", Enumerable.Range(0, 7).Where(i => chkDays[i].Checked).Select(i => (DayOfWeek)i));
+        Log($"Recurring schedule saved: {dayList} at {dtpRecurringTime.Value:HH:mm}. Keep this app open for it to fire.");
+    }
+
+    private void BtnRemoveRecurring_Click(object? sender, EventArgs e)
+    {
+        _recurringEnabled = false;
+        _lastRecurringTriggerDate = null;
+
+        foreach (var c in chkDays) { c.Checked = false; c.Enabled = true; }
+        dtpRecurringTime.Enabled = true;
+        btnSaveRecurring.Enabled = true;
+        btnRemoveRecurring.Enabled = false;
+
+        BuildSettingsFromForm().Save();
+        lblRecurringStatus.Text = "Not set.";
+        Log("Recurring schedule removed.");
+    }
+
+    private void UpdateRecurringStatusLabel()
+    {
+        if (!_recurringEnabled)
+        {
+            lblRecurringStatus.Text = "Not set.";
+            return;
+        }
+
+        var days = Enumerable.Range(0, 7).Where(i => chkDays[i].Checked).Select(i => (DayOfWeek)i).ToList();
+        if (days.Count == 0)
+        {
+            lblRecurringStatus.Text = "Not set.";
+            return;
+        }
+
+        var time = dtpRecurringTime.Value.TimeOfDay;
+        var now = DateTime.Now;
+        DateTime? next = null;
+        for (int add = 0; add < 8; add++)
+        {
+            var candidateDate = now.Date.AddDays(add);
+            if (!days.Contains(candidateDate.DayOfWeek)) continue;
+            var candidate = candidateDate + time;
+            if (candidate > now) { next = candidate; break; }
+        }
+
+        var dayList = string.Join(",", days.OrderBy(d => (int)d).Select(d => d.ToString().Substring(0, 3)));
+        lblRecurringStatus.Text = next is DateTime n
+            ? $"Runs {dayList} at {time:hh\\:mm}. Next: {n:yyyy-MM-dd HH:mm} (in {(int)(n - now).TotalHours:00}:{(n - now).Minutes:00}:{(n - now).Seconds:00})."
+            : $"Runs {dayList} at {time:hh\\:mm}.";
     }
 
     private async Task RunScheduledJob()
