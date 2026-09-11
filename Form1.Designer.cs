@@ -41,6 +41,14 @@ partial class Form1
     private Label lblHalfDescCaption;
     private NumericUpDown numHalfDesc;
 
+    private GroupBox grpSchedule;
+    private Label lblScheduleCaption;
+    private DateTimePicker dtpScheduleTime;
+    private Button btnSetSchedule;
+    private Button btnCancelSchedule;
+    private Label lblScheduleStatus;
+    private System.Windows.Forms.Timer scheduleTimer;
+
     private Button btnRunBoth;
     private Button btnStop;
     private Button btnClearLog;
@@ -79,6 +87,14 @@ partial class Form1
         numHalfAsc = new NumericUpDown();
         lblHalfDescCaption = new Label();
         numHalfDesc = new NumericUpDown();
+
+        grpSchedule = new GroupBox();
+        lblScheduleCaption = new Label();
+        dtpScheduleTime = new DateTimePicker();
+        btnSetSchedule = new Button();
+        btnCancelSchedule = new Button();
+        lblScheduleStatus = new Label();
+        scheduleTimer = new System.Windows.Forms.Timer(components);
 
         btnRunBoth = new Button();
         btnStop = new Button();
@@ -221,48 +237,87 @@ partial class Form1
         numHalfDesc.Maximum = 100000;
         numHalfDesc.Minimum = 0;
 
+        // grpSchedule
+        grpSchedule.Text = "Schedule Auto Run";
+        grpSchedule.Location = new Point(12, 300);
+        grpSchedule.Size = new Size(760, 90);
+        grpSchedule.Controls.Add(lblScheduleCaption);
+        grpSchedule.Controls.Add(dtpScheduleTime);
+        grpSchedule.Controls.Add(btnSetSchedule);
+        grpSchedule.Controls.Add(btnCancelSchedule);
+        grpSchedule.Controls.Add(lblScheduleStatus);
+
+        lblScheduleCaption.Text = "Run at:";
+        lblScheduleCaption.Location = new Point(15, 32);
+        lblScheduleCaption.AutoSize = true;
+
+        dtpScheduleTime.Format = DateTimePickerFormat.Custom;
+        dtpScheduleTime.CustomFormat = "yyyy-MM-dd HH:mm";
+        dtpScheduleTime.ShowUpDown = true;
+        dtpScheduleTime.Location = new Point(80, 29);
+        dtpScheduleTime.Size = new Size(160, 23);
+        dtpScheduleTime.Value = DateTime.Now.AddMinutes(5);
+
+        btnSetSchedule.Text = "Set Schedule";
+        btnSetSchedule.Location = new Point(260, 27);
+        btnSetSchedule.Size = new Size(110, 27);
+        btnSetSchedule.Click += BtnSetSchedule_Click;
+
+        btnCancelSchedule.Text = "Cancel";
+        btnCancelSchedule.Location = new Point(380, 27);
+        btnCancelSchedule.Size = new Size(90, 27);
+        btnCancelSchedule.Enabled = false;
+        btnCancelSchedule.Click += BtnCancelSchedule_Click;
+
+        lblScheduleStatus.Text = "Not scheduled.";
+        lblScheduleStatus.Location = new Point(15, 64);
+        lblScheduleStatus.AutoSize = true;
+
+        scheduleTimer.Interval = 1000;
+        scheduleTimer.Tick += ScheduleTimer_Tick;
+
         // run/log
         btnRunBoth.Text = "Run ASC + DESC (Parallel)";
-        btnRunBoth.Location = new Point(12, 306);
+        btnRunBoth.Location = new Point(12, 402);
         btnRunBoth.Size = new Size(220, 32);
         btnRunBoth.Font = new Font(btnRunBoth.Font, FontStyle.Bold);
         btnRunBoth.Click += BtnRunBoth_Click;
 
         btnStop.Text = "Stop";
-        btnStop.Location = new Point(242, 306);
+        btnStop.Location = new Point(242, 402);
         btnStop.Size = new Size(90, 32);
         btnStop.Enabled = false;
         btnStop.ForeColor = Color.DarkRed;
         btnStop.Click += BtnStop_Click;
 
         btnClearLog.Text = "Clear Log";
-        btnClearLog.Location = new Point(652, 306);
+        btnClearLog.Location = new Point(652, 402);
         btnClearLog.Size = new Size(120, 32);
         btnClearLog.Click += (s, e) => txtLog.Clear();
 
         lblStatus.Text = "Idle";
-        lblStatus.Location = new Point(344, 314);
+        lblStatus.Location = new Point(344, 410);
         lblStatus.AutoSize = true;
 
         lblAscProgress.Text = "ASC: --";
-        lblAscProgress.Location = new Point(12, 346);
+        lblAscProgress.Location = new Point(12, 442);
         lblAscProgress.Size = new Size(110, 20);
 
-        pbAsc.Location = new Point(126, 344);
+        pbAsc.Location = new Point(126, 440);
         pbAsc.Size = new Size(646, 20);
         pbAsc.Minimum = 0;
         pbAsc.Maximum = 1;
 
         lblDescProgress.Text = "DESC: --";
-        lblDescProgress.Location = new Point(12, 372);
+        lblDescProgress.Location = new Point(12, 468);
         lblDescProgress.Size = new Size(110, 20);
 
-        pbDesc.Location = new Point(126, 370);
+        pbDesc.Location = new Point(126, 466);
         pbDesc.Size = new Size(646, 20);
         pbDesc.Minimum = 0;
         pbDesc.Maximum = 1;
 
-        txtLog.Location = new Point(12, 400);
+        txtLog.Location = new Point(12, 496);
         txtLog.Size = new Size(760, 300);
         txtLog.Multiline = true;
         txtLog.ScrollBars = ScrollBars.Vertical;
@@ -272,9 +327,10 @@ partial class Form1
 
         // Form1
         AutoScaleMode = AutoScaleMode.Font;
-        ClientSize = new Size(784, 712);
+        ClientSize = new Size(784, 808);
         Controls.Add(grpConnection);
         Controls.Add(grpSplit);
+        Controls.Add(grpSchedule);
         Controls.Add(btnRunBoth);
         Controls.Add(btnStop);
         Controls.Add(btnClearLog);
@@ -284,7 +340,7 @@ partial class Form1
         Controls.Add(lblDescProgress);
         Controls.Add(pbDesc);
         Controls.Add(txtLog);
-        MinimumSize = new Size(800, 580);
+        MinimumSize = new Size(800, 676);
         Text = "Mister Churn Populate Runner";
         ResumeLayout(false);
     }

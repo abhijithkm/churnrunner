@@ -6,6 +6,7 @@ public partial class Form1 : Form
 {
     private bool _connCheckInProgress;
     private CancellationTokenSource? _runCts;
+    private DateTime? _scheduledRunTime;
 
     public Form1()
     {
@@ -14,6 +15,7 @@ public partial class Form1 : Form
         LoadSettingsIntoForm();
 
         connCheckTimer.Start();
+        scheduleTimer.Start();
         _ = CheckConnectionAsync();
     }
 
@@ -220,6 +222,11 @@ public partial class Form1 : Form
 
         if (confirm != DialogResult.Yes) return;
 
+        await RunBothFlow(halfAsc, halfDesc);
+    }
+
+    private async Task RunBothFlow(int halfAsc, int halfDesc)
+    {
         SetButtonsEnabled(false);
         btnStop.Enabled = true;
         SetStatus("Running...");
@@ -258,5 +265,87 @@ public partial class Form1 : Form
             _runCts?.Dispose();
             _runCts = null;
         }
+    }
+
+    private void BtnSetSchedule_Click(object? sender, EventArgs e)
+    {
+        var target = dtpScheduleTime.Value;
+        if (target <= DateTime.Now)
+        {
+            MessageBox.Show("Pick a date/time in the future.", "Invalid schedule",
+                MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        _scheduledRunTime = target;
+        dtpScheduleTime.Enabled = false;
+        btnSetSchedule.Enabled = false;
+        btnCancelSchedule.Enabled = true;
+        lblScheduleStatus.Text = $"Scheduled for {target:yyyy-MM-dd HH:mm:ss}.";
+        Log($"Schedule set for {target:yyyy-MM-dd HH:mm:ss}. Keep this app open — it runs Get Count then Run Both automatically at that time.");
+    }
+
+    private void BtnCancelSchedule_Click(object? sender, EventArgs e)
+    {
+        _scheduledRunTime = null;
+        dtpScheduleTime.Enabled = true;
+        btnSetSchedule.Enabled = true;
+        btnCancelSchedule.Enabled = false;
+        lblScheduleStatus.Text = "Not scheduled.";
+        Log("Schedule cancelled.");
+    }
+
+    private async void ScheduleTimer_Tick(object? sender, EventArgs e)
+    {
+        if (_scheduledRunTime is not DateTime target) return;
+
+        var remaining = target - DateTime.Now;
+        if (remaining <= TimeSpan.Zero)
+        {
+            _scheduledRunTime = null;
+            dtpScheduleTime.Enabled = true;
+            btnSetSchedule.Enabled = true;
+            btnCancelSchedule.Enabled = false;
+            lblScheduleStatus.Text = "Not scheduled.";
+
+            if (_runCts != null)
+            {
+                Log("Scheduled run skipped: a run is already in progress.");
+                return;
+            }
+
+            Log("Scheduled time reached — starting auto run (Get Count, then Run Both).");
+            await RunScheduledJob();
+            return;
+        }
+
+        lblScheduleStatus.Text =
+            $"Scheduled for {target:yyyy-MM-dd HH:mm:ss} (in {(int)remaining.TotalHours:00}:{remaining.Minutes:00}:{remaining.Seconds:00}).";
+    }
+
+    private async Task RunScheduledJob()
+    {
+        SetButtonsEnabled(false);
+
+        CountResult result;
+        try
+        {
+            var runner = new ChurnJobRunner(BuildSettingsFromForm());
+            result = await runner.GetCount();
+
+            txtLocationCount.Text = result.LocationCount.ToString();
+            numHalfAsc.Value = result.HalfAsc;
+            numHalfDesc.Value = result.HalfDesc;
+
+            Log($"Pending locations: {result.LocationCount} -> ASC {result.HalfAsc} / DESC {result.HalfDesc}");
+        }
+        catch (Exception ex)
+        {
+            Log($"Auto run: Get Count FAILED: {ex.Message}");
+            SetButtonsEnabled(true);
+            return;
+        }
+
+        await RunBothFlow(result.HalfAsc, result.HalfDesc);
     }
 }
