@@ -74,6 +74,15 @@ Logs to `%AppData%/ChurnRunner/logs/`. Requires connection settings to have
 been saved at least once first — there's no scheduler built in; wire this up
 to whatever external trigger (Task Scheduler, cron, CI) you want.
 
+## Update notifications
+
+On startup the app quietly checks the GitHub releases API for a newer
+version than the one it was built with. If one exists, a link appears in
+the top-right of the connection card ("⬆ Update available: vX.Y.Z") — click
+it to open the release page in your browser. No network access, no
+internet, or GitHub being unreachable all fail silently; nothing is ever
+downloaded or installed automatically.
+
 ## Connection settings
 
 Server, database, auth mode, and split overrides are saved via **Save
@@ -89,6 +98,7 @@ decrypt on a different machine or under a different account.
 | `ChurnJobRunner.cs` | Connects to SQL Server, runs `count.sql` and the ASC/DESC scripts, polls progress |
 | `Settings.cs` | Load/save connection settings (DPAPI-encrypted password) |
 | `Program.cs` | Entry point; handles `--auto` headless mode |
+| `UpdateChecker.cs` | Checks GitHub releases for a newer version on startup |
 | `Scripts/` | The actual `.sql` files executed at runtime (copied to output on build) |
 
 ## Building a release build yourself

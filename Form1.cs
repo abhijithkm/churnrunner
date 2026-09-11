@@ -19,6 +19,35 @@ public partial class Form1 : Form
         connCheckTimer.Start();
         scheduleTimer.Start();
         _ = CheckConnectionAsync();
+        _ = CheckForUpdatesAsync();
+    }
+
+    private async Task CheckForUpdatesAsync()
+    {
+        var update = await UpdateChecker.CheckForUpdateAsync();
+        if (update is null) return;
+
+        if (lnkUpdateAvailable.InvokeRequired)
+        {
+            lnkUpdateAvailable.Invoke(() => ShowUpdateAvailable(update));
+            return;
+        }
+        ShowUpdateAvailable(update);
+    }
+
+    private void ShowUpdateAvailable(UpdateChecker.UpdateInfo update)
+    {
+        lnkUpdateAvailable.Text = $"⬆ Update available: v{update.LatestVersion}";
+        lnkUpdateAvailable.Tag = update.Url;
+        lnkUpdateAvailable.Visible = true;
+    }
+
+    private void LnkUpdateAvailable_LinkClicked(object? sender, LinkLabelLinkClickedEventArgs e)
+    {
+        if (lnkUpdateAvailable.Tag is string url)
+        {
+            Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+        }
     }
 
     private void ConnCheckTimer_Tick(object? sender, EventArgs e) => _ = CheckConnectionAsync();
