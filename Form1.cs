@@ -1,0 +1,262 @@
+using System.Diagnostics;
+
+namespace ChurnRunner;
+
+public partial class Form1 : Form
+{
+    private bool _connCheckInProgress;
+    private CancellationTokenSource? _runCts;
+
+    public Form1()
+    {
+        InitializeComponent();
+        AuthMode_CheckedChanged(this, EventArgs.Empty);
+        LoadSettingsIntoForm();
+
+        connCheckTimer.Start();
+        _ = CheckConnectionAsync();
+    }
+
+    private void ConnCheckTimer_Tick(object? sender, EventArgs e) => _ = CheckConnectionAsync();
+
+    private void SetConnIndicator(string text, Color color)
+    {
+        if (lblConnIndicator.InvokeRequired)
+        {
+            lblConnIndicator.Invoke(() => SetConnIndicator(text, color));
+            return;
+        }
+
+        lblConnIndicator.Text = text;
+        lblConnIndicator.ForeColor = color;
+    }
+
+    private async Task CheckConnectionAsync()
+    {
+        if (_connCheckInProgress) return;
+        _connCheckInProgress = true;
+
+        try
+        {
+            SetConnIndicator("● Checking...", Color.Gray);
+
+            var runner = new ChurnJobRunner(BuildSettingsFromForm());
+            var builder = new Microsoft.Data.SqlClient.SqlConnectionStringBuilder(runner.BuildConnectionString())
+            {
+                ConnectTimeout = 5
+            };
+
+            using var conn = new Microsoft.Data.SqlClient.SqlConnection(builder.ConnectionString);
+            await conn.OpenAsync();
+            using var cmd = new Microsoft.Data.SqlClient.SqlCommand("SELECT 1", conn) { CommandTimeout = 5 };
+            await cmd.ExecuteScalarAsync();
+
+            SetConnIndicator($"● Connected ({DateTime.Now:HH:mm:ss})", Color.Green);
+        }
+        catch
+        {
+            SetConnIndicator($"● Disconnected ({DateTime.Now:HH:mm:ss})", Color.Red);
+        }
+        finally
+        {
+            _connCheckInProgress = false;
+        }
+    }
+
+    private Settings BuildSettingsFromForm()
+    {
+        var s = new Settings
+        {
+            Server = txtServer.Text.Trim(),
+            Database = txtDatabase.Text.Trim(),
+            WindowsAuth = rbWindowsAuth.Checked,
+            Username = txtUsername.Text.Trim(),
+            TrustServerCertificate = chkTrustCert.Checked,
+            HalfAscOverride = (int)numHalfAsc.Value,
+            HalfDescOverride = (int)numHalfDesc.Value
+        };
+        s.SetPassword(txtPassword.Text);
+        return s;
+    }
+
+    private void LoadSettingsIntoForm()
+    {
+        var s = Settings.Load();
+        if (s is null) return;
+
+        txtServer.Text = s.Server;
+        txtDatabase.Text = s.Database;
+        rbWindowsAuth.Checked = s.WindowsAuth;
+        rbSqlAuth.Checked = !s.WindowsAuth;
+        txtUsername.Text = s.Username;
+        chkTrustCert.Checked = s.TrustServerCertificate;
+        try { txtPassword.Text = s.GetPassword(); } catch { /* different machine/user profile */ }
+        if (s.HalfAscOverride is int a) numHalfAsc.Value = a;
+        if (s.HalfDescOverride is int d) numHalfDesc.Value = d;
+
+        Log("Loaded saved connection settings.");
+    }
+
+    private void AuthMode_CheckedChanged(object? sender, EventArgs e)
+    {
+        bool sqlAuth = rbSqlAuth.Checked;
+        txtUsername.Enabled = sqlAuth;
+        txtPassword.Enabled = sqlAuth;
+    }
+
+    private void Log(string message)
+    {
+        if (txtLog.InvokeRequired)
+        {
+            txtLog.Invoke(() => Log(message));
+            return;
+        }
+
+        txtLog.AppendText($"[{DateTime.Now:HH:mm:ss}] {message}{Environment.NewLine}");
+    }
+
+    private void SetStatus(string text) => lblStatus.Text = text;
+
+    private void SetButtonsEnabled(bool enabled)
+    {
+        btnTestConnection.Enabled = enabled;
+        btnGetCount.Enabled = enabled;
+        btnRunBoth.Enabled = enabled;
+        btnSaveSettings.Enabled = enabled;
+    }
+
+    private void SetProgress(ProgressBar bar, Label label, string side, int cur, int total)
+    {
+        if (bar.InvokeRequired)
+        {
+            bar.Invoke(() => SetProgress(bar, label, side, cur, total));
+            return;
+        }
+
+        bar.Maximum = Math.Max(total, 1);
+        bar.Value = Math.Clamp(cur, 0, bar.Maximum);
+        label.Text = $"{side}: {cur}/{total}";
+    }
+
+    private void BtnStop_Click(object? sender, EventArgs e)
+    {
+        if (_runCts is null) return;
+        Log("Stop requested — cancelling running EXEC(s). The in-flight location's write may be " +
+            "partially applied; check that location's row in CustomerUnlimitedData if it matters.");
+        _runCts.Cancel();
+        btnStop.Enabled = false;
+    }
+
+    private void BtnSaveSettings_Click(object? sender, EventArgs e)
+    {
+        try
+        {
+            BuildSettingsFromForm().Save();
+            Log("Connection settings saved (password encrypted with DPAPI, current Windows user only).");
+            _ = CheckConnectionAsync();
+        }
+        catch (Exception ex)
+        {
+            Log($"Save FAILED: {ex.Message}");
+        }
+    }
+
+    private async void BtnTestConnection_Click(object? sender, EventArgs e)
+    {
+        SetButtonsEnabled(false);
+        try
+        {
+            Log("Testing connection...");
+            var runner = new ChurnJobRunner(BuildSettingsFromForm());
+            using var conn = new Microsoft.Data.SqlClient.SqlConnection(runner.BuildConnectionString());
+            await conn.OpenAsync();
+            Log($"Connected OK. Server version: {conn.ServerVersion}");
+        }
+        catch (Exception ex)
+        {
+            Log($"Connection FAILED: {ex.Message}");
+        }
+        finally
+        {
+            SetButtonsEnabled(true);
+            _ = CheckConnectionAsync();
+        }
+    }
+
+    private async void BtnGetCount_Click(object? sender, EventArgs e)
+    {
+        SetButtonsEnabled(false);
+        try
+        {
+            var runner = new ChurnJobRunner(BuildSettingsFromForm());
+            var result = await runner.GetCount();
+
+            txtLocationCount.Text = result.LocationCount.ToString();
+            numHalfAsc.Value = result.HalfAsc;
+            numHalfDesc.Value = result.HalfDesc;
+
+            Log($"Pending locations: {result.LocationCount} -> ASC {result.HalfAsc} / DESC {result.HalfDesc}");
+        }
+        catch (Exception ex)
+        {
+            Log($"Get Count FAILED: {ex.Message}");
+        }
+        finally
+        {
+            SetButtonsEnabled(true);
+        }
+    }
+
+    private async void BtnRunBoth_Click(object? sender, EventArgs e)
+    {
+        int halfAsc = (int)numHalfAsc.Value;
+        int halfDesc = (int)numHalfDesc.Value;
+
+        var confirm = MessageBox.Show(
+            $"Run ASC with @Half={halfAsc} and DESC with @Half={halfDesc} in parallel against {txtServer.Text}/{txtDatabase.Text}?",
+            "Confirm Run",
+            MessageBoxButtons.YesNo,
+            MessageBoxIcon.Question);
+
+        if (confirm != DialogResult.Yes) return;
+
+        SetButtonsEnabled(false);
+        btnStop.Enabled = true;
+        SetStatus("Running...");
+        SetProgress(pbAsc, lblAscProgress, "ASC", 0, halfAsc);
+        SetProgress(pbDesc, lblDescProgress, "DESC", 0, halfDesc);
+        var sw = Stopwatch.StartNew();
+
+        var runner = new ChurnJobRunner(BuildSettingsFromForm());
+        runner.OnLog += Log;
+
+        _runCts = new CancellationTokenSource();
+
+        try
+        {
+            await runner.RunBoth(
+                halfAsc, halfDesc, _runCts.Token,
+                (cur, total) => SetProgress(pbAsc, lblAscProgress, "ASC", cur, total),
+                (cur, total) => SetProgress(pbDesc, lblDescProgress, "DESC", cur, total));
+            Log($"Both runs completed in {sw.Elapsed:mm\\:ss}.");
+            SetStatus("Done");
+        }
+        catch (OperationCanceledException)
+        {
+            Log($"Run stopped by user after {sw.Elapsed:mm\\:ss}.");
+            SetStatus("Stopped");
+        }
+        catch (Exception)
+        {
+            Log($"One or both runs FAILED after {sw.Elapsed:mm\\:ss}. See log above.");
+            SetStatus("Failed");
+        }
+        finally
+        {
+            SetButtonsEnabled(true);
+            btnStop.Enabled = false;
+            _runCts?.Dispose();
+            _runCts = null;
+        }
+    }
+}
