@@ -18,17 +18,13 @@ ID INT IDENTITY(1,1),
 LocationId uniqueidentifier,
 TimezoneOffset INT
 )
+    -- Same filter as the location selection below (and as count.sql), so LocationCount
+    -- is the number of locations the ASC and DESC runs will actually pick between them.
     DECLARE @LocationCount AS INT;
     SELECT @LocationCount = COUNT(LocationId)
-    FROM   Locations WITH (NOLOCK)
-    WHERE  IsAvailableOnDashboard = 1
-           AND (bDeleted IS NULL
-                OR bDeleted = 0)
-           AND dtLastSync IS NOT NULL
-           AND LocationId NOT IN (SELECT LocationId
-                                  FROM   CustomerUnlimitedData WITH (NOLOCK)
-                                  WHERE  dtRecord = @daterun - 1
-                                         AND dtcreated > @daterun);
+    FROM Locations with (nolock) WHERE IsAvailableOnDashboard = 1 AND bDeleted IS NULL OR bDeleted = 0 and dtLastSync is not null
+    and locationid not in
+    (select locationid from CustomerUnlimitedData with(nolock) where dtRecord= @daterun - 1 and dtcreated> @daterun);
     SELECT @LocationCount AS LocationCount,
            @Half AS Half;
     INSERT INTO @Locations (LocationId, TimezoneOffset)
