@@ -9,12 +9,40 @@ public partial class Form1 : Form
     private DateTime? _scheduledRunTime;
     private bool _recurringEnabled;
     private DateTime? _lastRecurringTriggerDate;
+    private Stopwatch? _runWatch;
+    private readonly bool _preview;
+    private DateTime? _lastConnTest;
+    private bool _lastConnOk;
+    private readonly ToolTip _tips = new();
 
-    public Form1()
+    public Form1() : this(preview: false) { }
+
+    /// <param name="preview">
+    /// Show the window filled with sample numbers and make no database or network
+    /// calls, for checking the layout without touching the client's server.
+    /// </param>
+    public Form1(bool preview)
     {
+        _preview = preview;
         InitializeComponent();
         AuthMode_CheckedChanged(this, EventArgs.Empty);
-        LoadSettingsIntoForm();
+        lblRunTitle.Text = $"Churn for {DateTime.Today.AddDays(-1):dddd d MMMM}";
+        ShowPendingCount(null);
+        UpdateSideTiles();
+        UpdateNextRunTile();
+
+        if (preview)
+        {
+            ShowPreviewState();
+            return;
+        }
+
+        bool hasSettings = LoadSettingsIntoForm();
+        SetConnectionFieldsVisible(!hasSettings);
+        UpdateTargetLabels();
+        UpdateNextRunTile();
+        UpdateLastRunTile();
+        RefreshTaskStatus();
 
         connCheckTimer.Start();
         scheduleTimer.Start();
@@ -37,7 +65,7 @@ public partial class Form1 : Form
 
     private void ShowUpdateAvailable(UpdateChecker.UpdateInfo update)
     {
-        lnkUpdateAvailable.Text = $"⬆ Update available: v{update.LatestVersion}";
+        lnkUpdateAvailable.Text = $"Update available: v{update.LatestVersion}";
         lnkUpdateAvailable.Tag = update.Url;
         lnkUpdateAvailable.Visible = true;
     }
@@ -52,6 +80,8 @@ public partial class Form1 : Form
 
     private void ConnCheckTimer_Tick(object? sender, EventArgs e) => _ = CheckConnectionAsync();
 
+    private void BtnCheckConnection_Click(object? sender, EventArgs e) => _ = CheckConnectionAsync();
+
     private void SetConnIndicator(string text, Color color)
     {
         if (lblConnIndicator.InvokeRequired)
@@ -64,6 +94,23 @@ public partial class Form1 : Form
         lblConnIndicator.ForeColor = color;
     }
 
+    /// <summary>Shows how long ago the connection was last tested; green when it connected, red when it did not.</summary>
+    private void RefreshConnIndicator()
+    {
+        if (_lastConnTest is not DateTime tested) return;
+        if (_connCheckInProgress && lblConnIndicator.Text.StartsWith("● Testing")) return;
+
+        var ago = DateTime.Now - tested;
+        string when = ago.TotalSeconds < 5 ? "just now"
+            : ago.TotalSeconds < 60 ? $"{(int)ago.TotalSeconds} sec ago"
+            : ago.TotalMinutes < 60 ? $"{(int)ago.TotalMinutes} min ago"
+            : $"at {tested:HH:mm}";
+        SetConnIndicator($"● Tested {when}", _lastConnOk ? Theme.Good : Theme.Fault);
+        _tips.SetToolTip(lblConnIndicator, _lastConnOk
+            ? $"Connected to {txtServer.Text.Trim()} at {tested:HH:mm:ss}."
+            : $"Could not connect to {txtServer.Text.Trim()} at {tested:HH:mm:ss}. Check the connection settings.");
+    }
+
     private async Task CheckConnectionAsync()
     {
         if (_connCheckInProgress) return;
@@ -71,7 +118,7 @@ public partial class Form1 : Form
 
         try
         {
-            SetConnIndicator("● Checking...", Color.Gray);
+            SetConnIndicator("● Testing…", Theme.Waiting);
 
             var runner = new ChurnJobRunner(BuildSettingsFromForm());
             var builder = new Microsoft.Data.SqlClient.SqlConnectionStringBuilder(runner.BuildConnectionString())
@@ -84,11 +131,15 @@ public partial class Form1 : Form
             using var cmd = new Microsoft.Data.SqlClient.SqlCommand("SELECT 1", conn) { CommandTimeout = 5 };
             await cmd.ExecuteScalarAsync();
 
-            SetConnIndicator($"● Connected ({DateTime.Now:HH:mm:ss})", Color.Green);
+            _lastConnTest = DateTime.Now;
+            _lastConnOk = true;
+            RefreshConnIndicator();
         }
         catch
         {
-            SetConnIndicator($"● Disconnected ({DateTime.Now:HH:mm:ss})", Color.Red);
+            _lastConnTest = DateTime.Now;
+            _lastConnOk = false;
+            RefreshConnIndicator();
         }
         finally
         {
@@ -115,10 +166,11 @@ public partial class Form1 : Form
         return s;
     }
 
-    private void LoadSettingsIntoForm()
+    /// <returns>True when saved settings were found and loaded.</returns>
+    private bool LoadSettingsIntoForm()
     {
         var s = Settings.Load();
-        if (s is null) return;
+        if (s is null) return false;
 
         txtServer.Text = s.Server;
         txtDatabase.Text = s.Database;
@@ -152,6 +204,7 @@ public partial class Form1 : Form
         UpdateRecurringStatusLabel();
 
         Log("Loaded saved connection settings.");
+        return true;
     }
 
     private void AuthMode_CheckedChanged(object? sender, EventArgs e)
@@ -159,7 +212,27 @@ public partial class Form1 : Form
         bool sqlAuth = rbSqlAuth.Checked;
         txtUsername.Enabled = sqlAuth;
         txtPassword.Enabled = sqlAuth;
+        UpdateTargetLabels();
     }
+
+    private void ConnectionFields_Changed(object? sender, EventArgs e) => UpdateTargetLabels();
+
+    private void UpdateTargetLabels()
+    {
+        string server = txtServer.Text.Trim();
+        string database = txtDatabase.Text.Trim();
+        lblTarget.Text = $"{server}  ·  {database}";
+        lblConnSummary.Text = rbSqlAuth.Checked
+            ? $"{server} / {database}, signed in as {txtUsername.Text.Trim()}"
+            : $"{server} / {database}, signed in with your Windows account";
+    }
+
+    private void BtnEditConnection_Click(object? sender, EventArgs e) => SetConnectionFieldsVisible(false);
+
+    private void BtnConnection_Click(object? sender, EventArgs e) => SetConnectionFieldsVisible(!pnlConnectionCard.Visible);
+
+    /// <summary>The connection card is opened from the header; it opens by itself when nothing is saved yet.</summary>
+    private void SetConnectionFieldsVisible(bool visible) => pnlConnectionCard.Visible = visible;
 
     private void Log(string message)
     {
@@ -169,10 +242,48 @@ public partial class Form1 : Form
             return;
         }
 
-        txtLog.AppendText($"[{DateTime.Now:HH:mm:ss}] {message}{Environment.NewLine}");
+        Color color =
+            message.Contains("FAILED", StringComparison.OrdinalIgnoreCase) || message.Contains("ERROR", StringComparison.OrdinalIgnoreCase) ? Theme.Fault :
+            message.StartsWith("[ASC]", StringComparison.Ordinal) ? Theme.Asc :
+            message.StartsWith("[DESC]", StringComparison.Ordinal) ? Theme.Desc :
+            Theme.Ink;
+
+        AppendLog($"{DateTime.Now:HH:mm:ss}  ", Theme.Waiting);
+        WriteLogFile(message);
+        AppendLog(message + Environment.NewLine, color);
+        txtLog.ScrollToCaret();
     }
 
-    private void SetStatus(string text) => lblStatus.Text = text;
+    /// <summary>Keeps every log line in %AppData%\ChurnRunner\logs\app_yyyyMMdd.log, one file per day.</summary>
+    private void WriteLogFile(string message)
+    {
+        if (_preview) return;
+        try
+        {
+            Directory.CreateDirectory(AppPaths.LogsFolder);
+            File.AppendAllText(Path.Combine(AppPaths.LogsFolder, $"app_{DateTime.Now:yyyyMMdd}.log"),
+                $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {message}{Environment.NewLine}");
+        }
+        catch
+        {
+            // The on-screen log still has the line; a locked or missing log folder must not stop a run.
+        }
+    }
+
+    private void AppendLog(string text, Color color)
+    {
+        txtLog.SelectionStart = txtLog.TextLength;
+        txtLog.SelectionLength = 0;
+        txtLog.SelectionColor = color;
+        txtLog.AppendText(text);
+    }
+
+    private void SetStatus(string text, Color color, Color tint)
+    {
+        lblStatus.Text = text;
+        lblStatus.ForeColor = color;
+        lblStatus.BackColor = tint;
+    }
 
     private void SetButtonsEnabled(bool enabled)
     {
@@ -182,17 +293,91 @@ public partial class Form1 : Form
         btnSaveSettings.Enabled = enabled;
     }
 
-    private void SetProgress(ProgressBar bar, Label label, string side, int cur, int total)
+    private void ShowPendingCount(int? count)
     {
-        if (bar.InvokeRequired)
+        var yesterday = DateTime.Today.AddDays(-1);
+        if (count is not int n)
         {
-            bar.Invoke(() => SetProgress(bar, label, side, cur, total));
+            lblPendingValue.Text = "—";
+            lblPendingNote.Text = "Refresh the count.";
             return;
         }
 
-        bar.Maximum = Math.Max(total, 1);
-        bar.Value = Math.Clamp(cur, 0, bar.Maximum);
-        label.Text = $"{side}: {cur}/{total}";
+        lblPendingValue.Text = n.ToString("N0");
+        lblPendingNote.Text = $"For {yesterday:ddd d MMM}.";
+    }
+
+    private void SplitValue_Changed(object? sender, EventArgs e)
+    {
+        if (_runWatch is not null) return;
+        trackRun.SetSplit((int)numHalfAsc.Value, (int)numHalfDesc.Value);
+        UpdateSideTiles();
+    }
+
+    private void SetProgress(bool asc, int cur, int total)
+    {
+        if (trackRun.InvokeRequired)
+        {
+            trackRun.Invoke(() => SetProgress(asc, cur, total));
+            return;
+        }
+
+        if (asc) trackRun.SetAsc(cur, total);
+        else trackRun.SetDesc(cur, total);
+        UpdateSideTiles();
+        UpdateRunMeta();
+    }
+
+    private void UpdateSideTiles()
+    {
+        lblAscValue.Text = $"{trackRun.AscDone:N0} / {trackRun.AscTotal:N0}";
+        lblAscNote.Text = trackRun.AscTotal == 0 ? "Not split yet" : "From the top";
+        lblDescValue.Text = $"{trackRun.DescDone:N0} / {trackRun.DescTotal:N0}";
+        lblDescNote.Text = trackRun.DescTotal == 0 ? "Not split yet" : "From the bottom";
+    }
+
+    private void UpdateNextRunTile()
+    {
+        DateTime? next = _scheduledRunTime;
+        string note = "One-time, in this app";
+
+        if (_recurringEnabled && NextRecurringRun() is DateTime weekly && (next is null || weekly < next))
+        {
+            next = weekly;
+            note = "Weekly, in this app";
+        }
+
+        if (next is DateTime n)
+        {
+            lblNextValue.Text = n.Date == DateTime.Today ? $"Today {n:HH:mm}" : $"{n:ddd HH:mm}";
+            lblNextNote.Text = note;
+        }
+        else
+        {
+            lblNextValue.Text = "None";
+            lblNextNote.Text = "Nothing scheduled";
+        }
+    }
+
+    private void UpdateRunMeta()
+    {
+        if (_runWatch is null) return;
+
+        var elapsed = _runWatch.Elapsed;
+        int done = trackRun.Done;
+        int left = trackRun.Total - done;
+        string text = $"{(int)elapsed.TotalMinutes:00}:{elapsed.Seconds:00} elapsed";
+
+        if (done > 0)
+        {
+            var perLocation = elapsed / done;
+            var remaining = perLocation * left;
+            text += $"  ·  {perLocation.TotalSeconds:0.0} s per location";
+            if (left > 0)
+                text += remaining.TotalMinutes < 1 ? "  ·  under a minute left" : $"  ·  about {Math.Ceiling(remaining.TotalMinutes):0} min left";
+        }
+
+        lblRunMeta.Text = text;
     }
 
     private void BtnStop_Click(object? sender, EventArgs e)
@@ -202,6 +387,7 @@ public partial class Form1 : Form
             "partially applied; check that location's row in CustomerUnlimitedData if it matters.");
         _runCts.Cancel();
         btnStop.Enabled = false;
+        SetStatus("Stopping…", Theme.Slate, Theme.WaitingTint);
     }
 
     private void BtnSaveSettings_Click(object? sender, EventArgs e)
@@ -209,7 +395,8 @@ public partial class Form1 : Form
         try
         {
             BuildSettingsFromForm().Save();
-            Log("Connection settings saved (password encrypted with DPAPI, current Windows user only).");
+            Log("Connection saved (password encrypted with DPAPI, current Windows user only).");
+            SetConnectionFieldsVisible(false);
             _ = CheckConnectionAsync();
         }
         catch (Exception ex)
@@ -248,7 +435,7 @@ public partial class Form1 : Form
             var runner = new ChurnJobRunner(BuildSettingsFromForm());
             var result = await runner.GetCount();
 
-            txtLocationCount.Text = result.LocationCount.ToString();
+            ShowPendingCount(result.LocationCount);
             numHalfAsc.Value = result.HalfAsc;
             numHalfDesc.Value = result.HalfDesc;
 
@@ -270,24 +457,30 @@ public partial class Form1 : Form
         int halfDesc = (int)numHalfDesc.Value;
 
         var confirm = MessageBox.Show(
-            $"Run ASC with @Half={halfAsc} and DESC with @Half={halfDesc} in parallel against {txtServer.Text}/{txtDatabase.Text}?",
-            "Confirm Run",
+            $"Start ASC ({halfAsc} locations) and DESC ({halfDesc} locations) in parallel on {txtServer.Text}/{txtDatabase.Text}?",
+            "Start both runs",
             MessageBoxButtons.YesNo,
             MessageBoxIcon.Question);
 
         if (confirm != DialogResult.Yes) return;
 
-        await RunBothFlow(halfAsc, halfDesc);
+        await RunBothFlow(halfAsc, halfDesc, "Manual");
     }
 
-    private async Task RunBothFlow(int halfAsc, int halfDesc)
+    private async Task RunBothFlow(int halfAsc, int halfDesc, string trigger)
     {
         SetButtonsEnabled(false);
         btnStop.Enabled = true;
-        SetStatus("Running...");
-        SetProgress(pbAsc, lblAscProgress, "ASC", 0, halfAsc);
-        SetProgress(pbDesc, lblDescProgress, "DESC", 0, halfDesc);
-        var sw = Stopwatch.StartNew();
+        SetStatus("Running", Theme.Primary, Theme.PrimaryTint);
+        trackRun.SetAsc(0, halfAsc);
+        trackRun.SetDesc(0, halfDesc);
+        UpdateSideTiles();
+        _runWatch = Stopwatch.StartNew();
+        var sw = _runWatch;
+        var started = DateTime.Now;
+        string result = "Failed";
+        AfterRunCheck? check = null;
+        UpdateRunMeta();
 
         var runner = new ChurnJobRunner(BuildSettingsFromForm());
         runner.OnLog += Log;
@@ -298,23 +491,32 @@ public partial class Form1 : Form
         {
             await runner.RunBoth(
                 halfAsc, halfDesc, _runCts.Token,
-                (cur, total) => SetProgress(pbAsc, lblAscProgress, "ASC", cur, total),
-                (cur, total) => SetProgress(pbDesc, lblDescProgress, "DESC", cur, total));
+                (cur, total) => SetProgress(true, cur, total),
+                (cur, total) => SetProgress(false, cur, total));
             Log($"Both runs completed in {sw.Elapsed:mm\\:ss}.");
-            SetStatus("Done");
+            result = "Done";
+            check = await RunAfterRunCheck(runner);
+            if (check is null) SetStatus("Done", Theme.Good, Theme.GoodTint);
+            else if (check.DuplicateLocations > 0) SetStatus($"Done · {check.DuplicateLocations} duplicated", Theme.Fault, Theme.FaultTint);
+            else if (check.PendingLocations > 0) SetStatus($"Done · {check.PendingLocations} left", Theme.Desc, Theme.DescTint);
+            else SetStatus("Done · all processed", Theme.Good, Theme.GoodTint);
         }
         catch (OperationCanceledException)
         {
+            result = "Stopped";
             Log($"Run stopped by user after {sw.Elapsed:mm\\:ss}.");
-            SetStatus("Stopped");
+            SetStatus("Stopped", Theme.Slate, Theme.WaitingTint);
         }
         catch (Exception)
         {
             Log($"One or both runs FAILED after {sw.Elapsed:mm\\:ss}. See log above.");
-            SetStatus("Failed");
+            SetStatus("Failed", Theme.Fault, Theme.FaultTint);
         }
         finally
         {
+            UpdateRunMeta();
+            _runWatch = null;
+            RecordRun(new RunRecord(started, DateTime.Now, trigger, halfAsc, halfDesc, result, check?.PendingLocations, check?.DuplicateLocations));
             SetButtonsEnabled(true);
             btnStop.Enabled = false;
             _runCts?.Dispose();
@@ -327,7 +529,7 @@ public partial class Form1 : Form
         var target = dtpScheduleTime.Value;
         if (target <= DateTime.Now)
         {
-            MessageBox.Show("Pick a date/time in the future.", "Invalid schedule",
+            MessageBox.Show("Pick a date and time in the future.", "Schedule not set",
                 MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
@@ -336,7 +538,8 @@ public partial class Form1 : Form
         dtpScheduleTime.Enabled = false;
         btnSetSchedule.Enabled = false;
         btnCancelSchedule.Enabled = true;
-        lblScheduleStatus.Text = $"Scheduled for {target:yyyy-MM-dd HH:mm:ss}.";
+        lblScheduleStatus.Text = $"Scheduled for {target:ddd d MMM HH:mm}.";
+        UpdateNextRunTile();
         Log($"Schedule set for {target:yyyy-MM-dd HH:mm:ss}. Keep this app open — it runs Get Count then Run Both automatically at that time.");
     }
 
@@ -347,11 +550,15 @@ public partial class Form1 : Form
         btnSetSchedule.Enabled = true;
         btnCancelSchedule.Enabled = false;
         lblScheduleStatus.Text = "Not scheduled.";
+        UpdateNextRunTile();
         Log("Schedule cancelled.");
     }
 
     private async void ScheduleTimer_Tick(object? sender, EventArgs e)
     {
+        UpdateRunMeta();
+        RefreshConnIndicator();
+
         if (_scheduledRunTime is DateTime target)
         {
             var remaining = target - DateTime.Now;
@@ -362,6 +569,7 @@ public partial class Form1 : Form
                 btnSetSchedule.Enabled = true;
                 btnCancelSchedule.Enabled = false;
                 lblScheduleStatus.Text = "Not scheduled.";
+                UpdateNextRunTile();
 
                 if (_runCts != null)
                 {
@@ -376,7 +584,7 @@ public partial class Form1 : Form
             else
             {
                 lblScheduleStatus.Text =
-                    $"Scheduled for {target:yyyy-MM-dd HH:mm:ss} (in {(int)remaining.TotalHours:00}:{remaining.Minutes:00}:{remaining.Seconds:00}).";
+                    $"Scheduled for {target:ddd d MMM HH:mm} (in {(int)remaining.TotalHours:00}:{remaining.Minutes:00}:{remaining.Seconds:00}).";
             }
         }
 
@@ -402,6 +610,7 @@ public partial class Form1 : Form
             }
 
             UpdateRecurringStatusLabel();
+            UpdateNextRunTile();
         }
     }
 
@@ -409,7 +618,7 @@ public partial class Form1 : Form
     {
         if (!chkDays.Any(c => c.Checked))
         {
-            MessageBox.Show("Select at least one day.", "Invalid schedule",
+            MessageBox.Show("Select at least one day.", "Weekly schedule not saved",
                 MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
@@ -424,6 +633,7 @@ public partial class Form1 : Form
 
         BuildSettingsFromForm().Save();
         UpdateRecurringStatusLabel();
+        UpdateNextRunTile();
 
         var dayList = string.Join(",", Enumerable.Range(0, 7).Where(i => chkDays[i].Checked).Select(i => (DayOfWeek)i));
         Log($"Recurring schedule saved: {dayList} at {dtpRecurringTime.Value:HH:mm}. Keep this app open for it to fire.");
@@ -441,7 +651,25 @@ public partial class Form1 : Form
 
         BuildSettingsFromForm().Save();
         lblRecurringStatus.Text = "Not set.";
+        UpdateNextRunTile();
         Log("Recurring schedule removed.");
+    }
+
+    private DateTime? NextRecurringRun()
+    {
+        var days = Enumerable.Range(0, 7).Where(i => chkDays[i].Checked).Select(i => (DayOfWeek)i).ToList();
+        if (days.Count == 0) return null;
+
+        var time = dtpRecurringTime.Value.TimeOfDay;
+        var now = DateTime.Now;
+        for (int add = 0; add < 8; add++)
+        {
+            var candidateDate = now.Date.AddDays(add);
+            if (!days.Contains(candidateDate.DayOfWeek)) continue;
+            var candidate = candidateDate + time;
+            if (candidate > now) return candidate;
+        }
+        return null;
     }
 
     private void UpdateRecurringStatusLabel()
@@ -461,18 +689,9 @@ public partial class Form1 : Form
 
         var time = dtpRecurringTime.Value.TimeOfDay;
         var now = DateTime.Now;
-        DateTime? next = null;
-        for (int add = 0; add < 8; add++)
-        {
-            var candidateDate = now.Date.AddDays(add);
-            if (!days.Contains(candidateDate.DayOfWeek)) continue;
-            var candidate = candidateDate + time;
-            if (candidate > now) { next = candidate; break; }
-        }
-
-        var dayList = string.Join(",", days.OrderBy(d => (int)d).Select(d => d.ToString().Substring(0, 3)));
-        lblRecurringStatus.Text = next is DateTime n
-            ? $"Runs {dayList} at {time:hh\\:mm}. Next: {n:yyyy-MM-dd HH:mm} (in {(int)(n - now).TotalHours:00}:{(n - now).Minutes:00}:{(n - now).Seconds:00})."
+        var dayList = string.Join(", ", days.OrderBy(d => (int)d).Select(d => d.ToString().Substring(0, 3)));
+        lblRecurringStatus.Text = NextRecurringRun() is DateTime n
+            ? $"Runs {dayList} at {time:hh\\:mm}. Next: {n:ddd d MMM HH:mm} (in {(int)(n - now).TotalHours:00}:{(n - now).Minutes:00}:{(n - now).Seconds:00})."
             : $"Runs {dayList} at {time:hh\\:mm}.";
     }
 
@@ -486,7 +705,7 @@ public partial class Form1 : Form
             var runner = new ChurnJobRunner(BuildSettingsFromForm());
             result = await runner.GetCount();
 
-            txtLocationCount.Text = result.LocationCount.ToString();
+            ShowPendingCount(result.LocationCount);
             numHalfAsc.Value = result.HalfAsc;
             numHalfDesc.Value = result.HalfDesc;
 
@@ -499,6 +718,154 @@ public partial class Form1 : Form
             return;
         }
 
-        await RunBothFlow(result.HalfAsc, result.HalfDesc);
+        await RunBothFlow(result.HalfAsc, result.HalfDesc, "Scheduled");
+    }
+
+    /// <summary>Read-only check after a finished run: what is still pending and any duplicated rows for yesterday.</summary>
+    private async Task<AfterRunCheck?> RunAfterRunCheck(ChurnJobRunner runner)
+    {
+        SetStatus("Checking results…", Theme.Primary, Theme.PrimaryTint);
+        try
+        {
+            var check = await runner.CheckAfterRun();
+            ShowPendingCount(check.PendingLocations);
+            Log($"After the run: {check.PendingLocations} location(s) still pending, {check.DuplicateLocations} location(s) with duplicate rows for yesterday.");
+            if (check.PendingLocations > 0)
+                Log("Some locations are still pending. Refresh the count and start both runs again to finish them.");
+            if (check.DuplicateLocations > 0)
+                Log("Duplicate rows found for yesterday. Check CustomerUnlimitedData before the next run; an interrupted earlier run can leave a second row per location.");
+            return check;
+        }
+        catch (Exception ex)
+        {
+            Log($"After-run check FAILED: {ex.Message}");
+            return null;
+        }
+    }
+
+    private void RecordRun(RunRecord record)
+    {
+        try { RunHistory.Add(record); }
+        catch (Exception ex) { Log($"Saving run history FAILED: {ex.Message}"); }
+        UpdateLastRunTile();
+    }
+
+    private void UpdateLastRunTile()
+    {
+        var last = RunHistory.Load().FirstOrDefault();
+        if (last is null)
+        {
+            lblLastValue.Text = "None";
+            lblLastNote.Text = "No runs recorded yet";
+            return;
+        }
+        ShowLastRun(last);
+    }
+
+    private void ShowLastRun(RunRecord last)
+    {
+        var took = last.Finished - last.Started;
+        lblLastValue.Text = $"{(int)took.TotalMinutes} min";
+        lblLastValue.ForeColor = last.Result switch { "Done" => Theme.Ink, "Failed" => Theme.Fault, _ => Theme.Slate };
+        string left = last.PendingAfter is int n && n > 0 ? $", {n} left" : "";
+        lblLastNote.Text = $"{last.Result} · {last.Started:ddd HH:mm}{left}";
+    }
+
+    private void BtnHistory_Click(object? sender, EventArgs e)
+    {
+        using var history = new HistoryForm(RunHistory.Load());
+        history.ShowDialog(this);
+    }
+
+    private void BtnOpenLogs_Click(object? sender, EventArgs e)
+    {
+        Directory.CreateDirectory(AppPaths.LogsFolder);
+        Process.Start(new ProcessStartInfo(AppPaths.LogsFolder) { UseShellExecute = true });
+    }
+
+    private void BtnAddTask_Click(object? sender, EventArgs e)
+    {
+        var days = Enumerable.Range(0, 7).Where(i => chkDays[i].Checked).Select(i => (DayOfWeek)i).ToList();
+        if (days.Count == 0)
+        {
+            MessageBox.Show("Select at least one day under Every week first.", "Windows task not added",
+                MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+        if (Settings.Load() is null)
+        {
+            MessageBox.Show("Save the connection first. The Windows task uses the saved connection.", "Windows task not added",
+                MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        var time = dtpRecurringTime.Value.TimeOfDay;
+        string dayList = string.Join(", ", days.Select(d => d.ToString()[..3]));
+        var confirm = MessageBox.Show(
+            $"Add a Windows scheduled task that runs both scripts on {dayList} at {time:hh\\:mm}, even when this window is closed?" + Environment.NewLine + Environment.NewLine +
+            "It runs as your Windows account while you are signed in. If the in-app weekly schedule is also saved, remove it so the run does not start twice.",
+            "Add Windows task", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+        if (confirm != DialogResult.Yes) return;
+
+        var (ok, output) = TaskSchedulerSetup.Create(days, time);
+        Log(ok ? $"Windows task added: {dayList} at {time:hh\\:mm}." : $"Adding the Windows task FAILED: {output}");
+        RefreshTaskStatus();
+    }
+
+    private void BtnRemoveTask_Click(object? sender, EventArgs e)
+    {
+        var (ok, output) = TaskSchedulerSetup.Delete();
+        Log(ok ? "Windows task removed." : $"Removing the Windows task FAILED: {output}");
+        RefreshTaskStatus();
+    }
+
+    private void RefreshTaskStatus()
+    {
+        string? next;
+        try { next = TaskSchedulerSetup.NextRunTime(); }
+        catch { next = null; }
+
+        btnRemoveTask.Enabled = next is not null;
+        btnAddTask.Text = next is null ? "Add Windows task" : "Update Windows task";
+        lblTaskStatus.Text = next is null
+            ? "Not set up. Uses the days and time above."
+            : string.IsNullOrEmpty(next) ? "Set up." : $"Set up. Next run: {next}.";
+    }
+
+    /// <summary>Sample state for <c>--preview</c>: a run partway through, no real connection.</summary>
+    private void ShowPreviewState()
+    {
+        UpdateTargetLabels();
+        _lastConnTest = DateTime.Now.AddSeconds(-15);
+        _lastConnOk = true;
+        RefreshConnIndicator();
+        ShowLastRun(new RunRecord(DateTime.Today.AddHours(1), DateTime.Today.AddHours(1).AddMinutes(24), "Windows task", 285, 284, "Done", 0, 0));
+        btnRemoveTask.Enabled = true;
+        btnAddTask.Text = "Update Windows task";
+        lblTaskStatus.Text = $"Set up. Next run: {DateTime.Today.AddDays(1).AddHours(1):dd/MM/yyyy HH:mm:ss}.";
+
+        ShowPendingCount(569);
+        numHalfAsc.Value = 285;
+        numHalfDesc.Value = 284;
+        trackRun.SetAsc(121, 285);
+        trackRun.SetDesc(98, 284);
+        UpdateSideTiles();
+
+        SetButtonsEnabled(false);
+        btnStop.Enabled = true;
+        SetStatus("Running", Theme.Primary, Theme.PrimaryTint);
+        lblRunMeta.Text = "09:24 elapsed  ·  2.6 s per location  ·  about 15 min left";
+
+        for (int i = 1; i <= 5; i++) chkDays[i].Checked = true;
+        _recurringEnabled = true;
+        UpdateRecurringStatusLabel();
+        UpdateNextRunTile();
+
+        Log("Pending locations: 569 -> ASC 285 / DESC 284");
+        Log("[ASC] starting usp_MisterChurnPopulate_Asc.sql (Half=285)");
+        Log("[DESC] starting usp_MisterChurnPopulate_Desc.sql (Half=284)");
+        Log("[ASC] [121/285] Processing location (A6652138-69C4-477C-A1F1-0E9AE65B43CA)");
+        Log("[DESC] [98/284] Processing location (5DEF20DE-5F47-43DC-8F26-EC23453D7F82)");
+        Log("Connection FAILED: example of how an error line looks.");
     }
 }

@@ -13,7 +13,10 @@ static class Program
         }
 
         ApplicationConfiguration.Initialize();
-        Application.Run(new Form1());
+
+        // --preview opens the window with sample numbers and no database or network calls.
+        bool preview = args.Contains("--preview", StringComparer.OrdinalIgnoreCase);
+        Application.Run(new Form1(preview));
     }
 
     private static async Task<int> RunHeadless()
@@ -35,7 +38,7 @@ static class Program
             var settings = Settings.Load();
             if (settings is null)
             {
-                Log("No saved settings found. Open the app once, fill in the connection, and click 'Save Connection Settings' before running with --auto.");
+                Log("No saved settings found. Open the app once, fill in the connection, and click 'Save connection' before running with --auto.");
                 return 1;
             }
 
@@ -50,8 +53,31 @@ static class Program
             var count = await runner.GetCount();
             Log($"Pending locations: {count.LocationCount} -> ASC {count.HalfAsc} / DESC {count.HalfDesc}");
 
-            await runner.RunBoth(count.HalfAsc, count.HalfDesc);
+            var started = DateTime.Now;
+            try
+            {
+                await runner.RunBoth(count.HalfAsc, count.HalfDesc);
+            }
+            catch
+            {
+                RunHistory.Add(new RunRecord(started, DateTime.Now, "Windows task", count.HalfAsc, count.HalfDesc, "Failed", null, null));
+                throw;
+            }
             Log("Auto run completed OK.");
+
+            AfterRunCheck? check = null;
+            try
+            {
+                check = await runner.CheckAfterRun();
+                Log($"After the run: {check.PendingLocations} location(s) still pending, {check.DuplicateLocations} location(s) with duplicate rows for yesterday.");
+            }
+            catch (Exception ex)
+            {
+                Log($"After-run check FAILED: {ex.Message}");
+            }
+
+            RunHistory.Add(new RunRecord(started, DateTime.Now, "Windows task", count.HalfAsc, count.HalfDesc, "Done",
+                check?.PendingLocations, check?.DuplicateLocations));
             return 0;
         }
         catch (Exception ex)

@@ -4,6 +4,7 @@ using Microsoft.Data.SqlClient;
 namespace ChurnRunner;
 
 public record CountResult(int LocationCount, int HalfAsc, int HalfDesc);
+public record AfterRunCheck(int PendingLocations, int DuplicateLocations);
 
 public class ChurnJobRunner
 {
@@ -61,6 +62,27 @@ public class ChurnJobRunner
         int halfDesc = reader.GetInt32(reader.GetOrdinal("HalfDesc"));
 
         return new CountResult(locationCount, halfAsc, halfDesc);
+    }
+
+    /// <summary>
+    /// Read-only check after a run: locations still pending (same query as Get Count)
+    /// and locations that ended up with more than one row for yesterday.
+    /// </summary>
+    public async Task<AfterRunCheck> CheckAfterRun()
+    {
+        var count = await GetCount();
+
+        using var conn = new SqlConnection(BuildConnectionString());
+        await conn.OpenAsync();
+        using var cmd = new SqlCommand(
+            "SELECT COUNT(*) FROM (SELECT LocationId FROM CustomerUnlimitedData WITH (NOLOCK) " +
+            "WHERE dtRecord = DATEADD(day, -1, dbo.DateOnly(GETDATE())) " +
+            "GROUP BY LocationId HAVING COUNT(*) > 1) d",
+            conn)
+        { CommandTimeout = 120 };
+        int duplicates = Convert.ToInt32(await cmd.ExecuteScalarAsync());
+
+        return new AfterRunCheck(count.LocationCount, duplicates);
     }
 
     /// <summary>
