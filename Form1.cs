@@ -18,6 +18,7 @@ public partial class Form1 : Form
     private bool _processedRefreshing;
     private DateTime _lastProcessedRefresh;
     private readonly ToolTip _tips = new();
+    private readonly AppUpdater _updater = new();
 
     public Form1() : this(preview: false) { }
 
@@ -57,6 +58,29 @@ public partial class Form1 : Form
 
     private async Task CheckForUpdatesAsync()
     {
+        // Installed copies download the new version in the background and install it on restart.
+        if (_updater.IsInstalled)
+        {
+            try
+            {
+                var version = await _updater.CheckAndDownloadAsync();
+                if (version is null) return;
+                lnkUpdateAvailable.Invoke(() =>
+                {
+                    lnkUpdateAvailable.Text = $"Version {version} is ready · restart to update";
+                    lnkUpdateAvailable.Tag = null;
+                    lnkUpdateAvailable.Visible = true;
+                });
+                Log($"Version {version} downloaded. Click \"restart to update\" in the header to install it.");
+            }
+            catch (Exception ex)
+            {
+                Log($"Update check FAILED: {ex.Message}");
+            }
+            return;
+        }
+
+        // A copy run straight from the zip only links to the release page.
         var update = await UpdateChecker.CheckForUpdateAsync();
         if (update is null) return;
 
@@ -80,7 +104,20 @@ public partial class Form1 : Form
         if (lnkUpdateAvailable.Tag is string url)
         {
             Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+            return;
         }
+
+        if (!_updater.HasUpdateReady) return;
+        if (_runCts is not null)
+        {
+            MessageBox.Show("A run is in progress. Restart to update once it has finished.", "Update not installed",
+                MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        var confirm = MessageBox.Show("Close Churn Runner, install the new version and open it again?", "Restart to update",
+            MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+        if (confirm == DialogResult.Yes) _updater.ApplyAndRestart();
     }
 
     private void ConnCheckTimer_Tick(object? sender, EventArgs e) => _ = CheckConnectionAsync();

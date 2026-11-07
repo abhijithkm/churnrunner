@@ -5,6 +5,9 @@ static class Program
     [STAThread]
     static void Main(string[] args)
     {
+        // Must run first: lets the installer and updater run their install, update and uninstall steps.
+        Velopack.VelopackApp.Build().Run();
+
         if (args.Contains("--auto", StringComparer.OrdinalIgnoreCase))
         {
             int exitCode = RunHeadless().GetAwaiter().GetResult();
