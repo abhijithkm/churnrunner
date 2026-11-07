@@ -365,9 +365,9 @@ partial class Form1
         pnlConnectionFields.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         pnlConnectionFields.Margin = new Padding(0, 12, 0, 0);
 
-        txtServer = NewTextBox("34.204.209.40");
+        txtServer = NewTextBox("");
         txtServer.TextChanged += ConnectionFields_Changed;
-        txtDatabase = NewTextBox("MisterCarWash");
+        txtDatabase = NewTextBox("");
         txtDatabase.TextChanged += ConnectionFields_Changed;
         rbSqlAuth = new RadioButton { Text = "SQL login", AutoSize = true, Checked = true, Margin = new Padding(0, 4, 14, 0) };
         rbSqlAuth.CheckedChanged += AuthMode_CheckedChanged;
@@ -376,7 +376,7 @@ partial class Form1
         var auth = NewFlow(FlowDirection.LeftToRight);
         auth.Controls.Add(rbSqlAuth);
         auth.Controls.Add(rbWindowsAuth);
-        txtUsername = NewTextBox("sa");
+        txtUsername = NewTextBox("");
         txtUsername.TextChanged += ConnectionFields_Changed;
         txtPassword = NewTextBox("");
         txtPassword.UseSystemPasswordChar = true;

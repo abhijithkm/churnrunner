@@ -156,6 +156,12 @@ public partial class Form1 : Form
     private async Task CheckConnectionAsync()
     {
         if (_connCheckInProgress) return;
+        if (!HasServer)
+        {
+            SetConnIndicator("● No server set", Theme.Waiting);
+            _tips.SetToolTip(lblConnIndicator, "Open Connection and save the server details for this PC.");
+            return;
+        }
         _connCheckInProgress = true;
 
         try
@@ -259,10 +265,20 @@ public partial class Form1 : Form
 
     private void ConnectionFields_Changed(object? sender, EventArgs e) => UpdateTargetLabels();
 
+    /// <summary>True once a server is filled in, from the saved settings or by typing it in.</summary>
+    private bool HasServer => !string.IsNullOrWhiteSpace(txtServer.Text);
+
     private void UpdateTargetLabels()
     {
         string server = txtServer.Text.Trim();
         string database = txtDatabase.Text.Trim();
+        if (!HasServer)
+        {
+            lblTarget.Text = "No server set. Open Connection to add one.";
+            lblConnSummary.Text = "Enter the server details and click Save connection. They are saved on this PC only.";
+            return;
+        }
+
         lblTarget.Text = $"{server}  ·  {database}";
         lblConnSummary.Text = rbSqlAuth.Checked
             ? $"{server} / {database}, signed in as {txtUsername.Text.Trim()}"
@@ -373,7 +389,7 @@ public partial class Form1 : Form
     /// <summary>Reads how many locations are processed so far (script\check1.sql). Read-only.</summary>
     private async Task RefreshProcessedAsync(ChurnJobRunner? runner = null, bool logResult = false)
     {
-        if (_preview || _processedRefreshing) return;
+        if (_preview || _processedRefreshing || !HasServer) return;
         _processedRefreshing = true;
         _lastProcessedRefresh = DateTime.Now;
         try
@@ -927,6 +943,9 @@ public partial class Form1 : Form
     /// <summary>Sample state for <c>--preview</c>: a run partway through, no real connection.</summary>
     private void ShowPreviewState()
     {
+        txtServer.Text = "sql.example.local";
+        txtDatabase.Text = "ChurnDb";
+        txtUsername.Text = "churn_runner";
         UpdateTargetLabels();
         _lastConnTest = DateTime.Now.AddSeconds(-15);
         _lastConnOk = true;
