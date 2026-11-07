@@ -15,6 +15,8 @@ public partial class Form1 : Form
     private bool _lastConnOk;
     private int? _processed;
     private int? _pending;
+    private int? _total;
+    private bool _countFresh;
     private bool _processedRefreshing;
     private DateTime _lastProcessedRefresh;
     private readonly ToolTip _tips = new();
@@ -354,6 +356,7 @@ public partial class Form1 : Form
     private void ShowPendingCount(int? count)
     {
         _pending = count;
+        _countFresh = count is not null;
         UpdateProcessedTile();
     }
 
@@ -364,9 +367,10 @@ public partial class Form1 : Form
     private void UpdateProcessedTile()
     {
         var yesterday = DateTime.Today.AddDays(-1);
-        if (_processed is int done && _pending is int left)
+        if (_processed is int done && _total is int total)
         {
-            lblPendingValue.Text = $"{done:N0} / {done + left:N0}";
+            int left = Math.Max(total - done, 0);
+            lblPendingValue.Text = $"{done:N0} / {total:N0}";
             lblPendingNote.Text = left == 0 ? $"All done for {yesterday:ddd d MMM}" : $"{left:N0} still to process";
         }
         else if (_processed is int doneOnly)
@@ -396,6 +400,11 @@ public partial class Form1 : Form
         {
             runner ??= new ChurnJobRunner(BuildSettingsFromForm());
             _processed = await runner.GetProcessedCount();
+            if (_countFresh && _pending is int pendingNow)
+            {
+                _total = _processed + pendingNow;
+                _countFresh = false;
+            }
             UpdateProcessedTile();
             if (logResult) Log($"Locations processed so far for {DateTime.Today.AddDays(-1):ddd d MMM}: {_processed}");
         }
@@ -957,6 +966,8 @@ public partial class Form1 : Form
 
         _processed = 219;
         ShowPendingCount(350);
+        _total = 569;
+        UpdateProcessedTile();
         numHalfAsc.Value = 285;
         numHalfDesc.Value = 284;
         trackRun.SetAsc(121, 285);
