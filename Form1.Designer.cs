@@ -284,7 +284,7 @@ partial class Form1
         };
         for (int i = 0; i < 5; i++) row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 20));
 
-        row.Controls.Add(Tile(Theme.GlyphPin, Theme.Primary, Theme.PrimaryTint, "Locations to process", out lblPendingValue, out lblPendingNote, new Padding(0, 0, 8, 0)), 0, 0);
+        row.Controls.Add(Tile(Theme.GlyphPin, Theme.Primary, Theme.PrimaryTint, "Locations processed", out lblPendingValue, out lblPendingNote, new Padding(0, 0, 8, 0)), 0, 0);
         row.Controls.Add(Tile(Theme.GlyphUp, Theme.Asc, Theme.AscTint, "ASC run", out lblAscValue, out lblAscNote, new Padding(8, 0, 8, 0)), 1, 0);
         row.Controls.Add(Tile(Theme.GlyphDown, Theme.Desc, Theme.DescTint, "DESC run", out lblDescValue, out lblDescNote, new Padding(8, 0, 8, 0)), 2, 0);
         row.Controls.Add(Tile(Theme.GlyphCalendar, Theme.Violet, Theme.VioletTint, "Next scheduled run", out lblNextValue, out lblNextNote, new Padding(8, 0, 8, 0)), 3, 0);

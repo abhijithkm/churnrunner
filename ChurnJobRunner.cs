@@ -65,6 +65,23 @@ public class ChurnJobRunner
     }
 
     /// <summary>
+    /// Locations that already have yesterday's churn row, written today (same query as
+    /// script\check1.sql). Read-only.
+    /// </summary>
+    public async Task<int> GetProcessedCount()
+    {
+        using var conn = new SqlConnection(BuildConnectionString());
+        await conn.OpenAsync();
+        using var cmd = new SqlCommand(
+            "SELECT COUNT(*) FROM CustomerUnlimitedData WITH (NOLOCK) " +
+            "WHERE dtRecord = DATEADD(day, -1, dbo.DateOnly(GETDATE())) " +
+            "AND dtCreated > dbo.DateOnly(GETDATE())",
+            conn)
+        { CommandTimeout = 60 };
+        return Convert.ToInt32(await cmd.ExecuteScalarAsync());
+    }
+
+    /// <summary>
     /// Read-only check after a run: locations still pending (same query as Get Count)
     /// and locations that ended up with more than one row for yesterday.
     /// </summary>

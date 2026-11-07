@@ -13,6 +13,10 @@ public partial class Form1 : Form
     private readonly bool _preview;
     private DateTime? _lastConnTest;
     private bool _lastConnOk;
+    private int? _processed;
+    private int? _pending;
+    private bool _processedRefreshing;
+    private DateTime _lastProcessedRefresh;
     private readonly ToolTip _tips = new();
 
     public Form1() : this(preview: false) { }
@@ -43,6 +47,7 @@ public partial class Form1 : Form
         UpdateNextRunTile();
         UpdateLastRunTile();
         RefreshTaskStatus();
+        _ = RefreshProcessedAsync();
 
         connCheckTimer.Start();
         scheduleTimer.Start();
@@ -295,16 +300,60 @@ public partial class Form1 : Form
 
     private void ShowPendingCount(int? count)
     {
+        _pending = count;
+        UpdateProcessedTile();
+    }
+
+    /// <summary>
+    /// First tile: locations with yesterday's churn row written today, out of processed plus
+    /// still pending. Either number can be missing until it has been read from the server.
+    /// </summary>
+    private void UpdateProcessedTile()
+    {
         var yesterday = DateTime.Today.AddDays(-1);
-        if (count is not int n)
+        if (_processed is int done && _pending is int left)
+        {
+            lblPendingValue.Text = $"{done:N0} / {done + left:N0}";
+            lblPendingNote.Text = left == 0 ? $"All done for {yesterday:ddd d MMM}" : $"{left:N0} still to process";
+        }
+        else if (_processed is int doneOnly)
+        {
+            lblPendingValue.Text = doneOnly.ToString("N0");
+            lblPendingNote.Text = "Refresh the count for the total";
+        }
+        else if (_pending is int leftOnly)
+        {
+            lblPendingValue.Text = leftOnly.ToString("N0");
+            lblPendingNote.Text = "Still to process";
+        }
+        else
         {
             lblPendingValue.Text = "—";
             lblPendingNote.Text = "Refresh the count.";
-            return;
         }
+    }
 
-        lblPendingValue.Text = n.ToString("N0");
-        lblPendingNote.Text = $"For {yesterday:ddd d MMM}.";
+    /// <summary>Reads how many locations are processed so far (script\check1.sql). Read-only.</summary>
+    private async Task RefreshProcessedAsync(ChurnJobRunner? runner = null, bool logResult = false)
+    {
+        if (_preview || _processedRefreshing) return;
+        _processedRefreshing = true;
+        _lastProcessedRefresh = DateTime.Now;
+        try
+        {
+            runner ??= new ChurnJobRunner(BuildSettingsFromForm());
+            _processed = await runner.GetProcessedCount();
+            UpdateProcessedTile();
+            if (logResult) Log($"Locations processed so far for {DateTime.Today.AddDays(-1):ddd d MMM}: {_processed}");
+        }
+        catch (Exception ex)
+        {
+            if (logResult) Log($"Processed count FAILED: {ex.Message}");
+        }
+        finally
+        {
+            _processedRefreshing = false;
+        }
     }
 
     private void SplitValue_Changed(object? sender, EventArgs e)
@@ -440,6 +489,7 @@ public partial class Form1 : Form
             numHalfDesc.Value = result.HalfDesc;
 
             Log($"Pending locations: {result.LocationCount} -> ASC {result.HalfAsc} / DESC {result.HalfDesc}");
+            await RefreshProcessedAsync(runner, logResult: true);
         }
         catch (Exception ex)
         {
@@ -556,6 +606,9 @@ public partial class Form1 : Form
 
     private async void ScheduleTimer_Tick(object? sender, EventArgs e)
     {
+        if (_runWatch is not null && DateTime.Now - _lastProcessedRefresh >= TimeSpan.FromSeconds(30))
+            _ = RefreshProcessedAsync();
+
         UpdateRunMeta();
         RefreshConnIndicator();
 
@@ -710,6 +763,7 @@ public partial class Form1 : Form
             numHalfDesc.Value = result.HalfDesc;
 
             Log($"Pending locations: {result.LocationCount} -> ASC {result.HalfAsc} / DESC {result.HalfDesc}");
+            await RefreshProcessedAsync(runner, logResult: true);
         }
         catch (Exception ex)
         {
@@ -729,6 +783,7 @@ public partial class Form1 : Form
         {
             var check = await runner.CheckAfterRun();
             ShowPendingCount(check.PendingLocations);
+            await RefreshProcessedAsync(runner, logResult: true);
             Log($"After the run: {check.PendingLocations} location(s) still pending, {check.DuplicateLocations} location(s) with duplicate rows for yesterday.");
             if (check.PendingLocations > 0)
                 Log("Some locations are still pending. Refresh the count and start both runs again to finish them.");
@@ -844,7 +899,8 @@ public partial class Form1 : Form
         btnAddTask.Text = "Update Windows task";
         lblTaskStatus.Text = $"Set up. Next run: {DateTime.Today.AddDays(1).AddHours(1):dd/MM/yyyy HH:mm:ss}.";
 
-        ShowPendingCount(569);
+        _processed = 219;
+        ShowPendingCount(350);
         numHalfAsc.Value = 285;
         numHalfDesc.Value = 284;
         trackRun.SetAsc(121, 285);
